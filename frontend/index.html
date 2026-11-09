@@ -5,6 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#eeefe7">
     <title>Shrinkly — Make any PDF AI-ready</title>
+    <script>
+      try {
+        const savedTheme = localStorage.getItem("shrinkly-theme");
+        const preferredTheme = ["light", "dark"].includes(savedTheme)
+          ? savedTheme
+          : window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        document.documentElement.dataset.theme = preferredTheme;
+        document.querySelector('meta[name="theme-color"]').content =
+          preferredTheme === "dark" ? "#111714" : "#eeefe7";
+      } catch {
+        document.documentElement.dataset.theme = "light";
+      }
+    </script>
     <link rel="stylesheet" href="/styles.css">
     <script src="/app.js" defer></script>
   </head>
@@ -12,12 +27,26 @@
     <main class="shell">
       <header class="topbar">
         <a class="brand" href="/" aria-label="Shrinkly home">
-          <span class="brand-mark" aria-hidden="true">S/</span>
+          <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M11 7h12l7 7v19H11z" fill="none" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M23 7v8h7M15 20h11M15 25h8" fill="none" stroke="currentColor" stroke-width="1.7"/>
+            <path d="m20 29 3-3m-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          </svg>
           <span class="brand-name">SHRINKLY<small>DOCUMENT UTILITY / 01</small></span>
         </a>
         <div class="top-meta">
           <span class="status-dot">LOCAL PROCESSING</span>
           <span class="top-note">PHASE 01 <b>PDF</b></span>
+          <button id="theme-toggle" class="theme-toggle" type="button"
+            aria-label="Switch to dark mode" title="Switch to dark mode">
+            <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/>
+            </svg>
+            <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z"/>
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -109,9 +138,26 @@
         </section>
       </div>
 
-      <footer>
-        <span>SHRINKLY <i>—</i> DOCUMENT UTILITY / 01</span>
-        <span>PROCESSING STAYS HERE. NO AI PROVIDER CONNECTION.</span>
+      <footer class="site-footer">
+        <div class="footer-contact">
+          <div class="footer-contact-intro">
+            <p class="footer-kicker">CONTACT / 01</p>
+            <h2>Questions?<br><span>Say hello.</span></h2>
+          </div>
+          <div class="contact-person">
+            <span class="contact-label">YOUR CONTACT</span>
+            <strong>Jaswanth Na</strong>
+            <a href="https://www.linkedin.com/in/jaswanth-na/"
+              target="_blank" rel="noopener noreferrer">
+              Connect on LinkedIn <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </div>
+        <div class="footer-bottom">
+          <span>SHRINKLY <i>—</i> DOCUMENT UTILITY / 01</span>
+          <span>PROCESSING STAYS HERE. NO AI PROVIDER CONNECTION.</span>
+          <span class="version-badge">v2.1.1</span>
+        </div>
       </footer>
     </main>
   </body>

@@ -1,4 +1,5 @@
 const fileInput = document.querySelector("#file-input");
+const themeToggle = document.querySelector("#theme-toggle");
 const dropzone = document.querySelector("#dropzone");
 const fileSummary = document.querySelector("#file-summary");
 const startButton = document.querySelector("#start-button");
@@ -22,6 +23,34 @@ const errorMessage = document.querySelector("#error-message");
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 let selectedFile = null;
 let busy = false;
+
+function updateTheme(theme, persist = true) {
+  document.documentElement.dataset.theme = theme;
+  const isDark = theme === "dark";
+  const label = `Switch to ${isDark ? "light" : "dark"} mode`;
+  themeToggle.setAttribute("aria-label", label);
+  themeToggle.title = label;
+  document.querySelector('meta[name="theme-color"]').content =
+    isDark ? "#111714" : "#eeefe7";
+  if (persist) {
+    try {
+      localStorage.setItem("shrinkly-theme", theme);
+    } catch {
+      // Theme changes still apply for this page when storage is unavailable.
+    }
+  }
+}
+
+updateTheme(
+  document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+  false,
+);
+
+themeToggle.addEventListener("click", () => {
+  const nextTheme =
+    document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  updateTheme(nextTheme);
+});
 
 function formatBytes(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;

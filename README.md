@@ -14,7 +14,8 @@ to an AI provider.
   ChatGPT, Claude, Gemini, and custom part-size choices.
 - Three explicit output modes: one `.md` download, a parts-only ZIP with a
   manifest, or one metadata-stripped, stream-compressed `.pdf` download.
-- A responsive browser UI served by the FastAPI app.
+- A responsive browser UI served by the FastAPI app, with a persistent
+  light/dark theme toggle, contact link, and UI version badge.
 - Per-IP upload-init rate limiting and hourly cleanup of local temporary files.
 
 Provider token limits in `backend/app/config/ai_limits.json` are conservative
@@ -83,3 +84,9 @@ python -m pytest backend\tests
 
 OCR integration depends on the system Tesseract installation; the automated
 tests cover the text-PDF pipeline and confirm that scanned pages are detected.
+
+## UI version
+
+The footer displays the current UI version. Update the version badge in
+`frontend/index.html` for each feature commit using the project's manual
+versioning convention (for example, `v2.1.1`, then `v2.1.2`).
