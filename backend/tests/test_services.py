@@ -165,7 +165,6 @@ def test_split_parts_stay_under_token_limit_and_package(tmp_path: Path) -> None:
     archive_path = tmp_path / "result.zip"
     build_package(
         output_path=archive_path,
-        markdown_path=markdown_path,
         parts=parts,
         analysis=analysis,
         source_filename="source.pdf",
@@ -174,9 +173,10 @@ def test_split_parts_stay_under_token_limit_and_package(tmp_path: Path) -> None:
         warnings=[],
     )
     with zipfile.ZipFile(archive_path) as archive:
-        assert "full.md" in archive.namelist()
-        assert "manifest.json" in archive.namelist()
-        assert len([name for name in archive.namelist() if name.startswith("parts/")]) == len(parts)
+        names = set(archive.namelist())
+        assert "manifest.json" in names
+        assert "full.md" not in names
+        assert len([name for name in names if name.startswith("parts/")]) == len(parts)
 
 
 def _pdf_fixture(tmp_path: Path) -> Path:

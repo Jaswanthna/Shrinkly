@@ -56,11 +56,14 @@
               <span class="field-label"><i>02</i> OUTPUT MODE</span>
               <select id="mode">
                 <option value="split">Split into AI-sized parts</option>
-                <option value="text_only">Text only (Markdown)</option>
-                <option value="compressed_original">Markdown + compressed PDF</option>
+                <option value="text_only">One Markdown file</option>
+                <option value="compressed_original">Compressed PDF only</option>
               </select>
+              <span id="output-preview" class="output-preview" aria-live="polite">
+                Download: <b>ai-ready-parts.zip</b> with parts and a manifest — no duplicate full document.
+              </span>
             </label>
-            <label>
+            <label id="target-ai-field">
               <span class="field-label"><i>03</i> TARGET / PART SIZE</span>
               <select id="target-ai">
                 <option value="chatgpt">ChatGPT · 32K token parts</option>
@@ -73,7 +76,7 @@
               <span class="field-label"><i>04</i> CUSTOM TOKEN LIMIT</span>
               <input id="custom-limit" type="number" min="64" max="1000000" value="8000">
             </label>
-            <label>
+            <label id="ocr-language-field">
               <span class="field-label"><i>04</i> OCR LANGUAGE</span>
               <input id="ocr-language" type="text" value="eng" maxlength="32"
                 autocomplete="off" aria-describedby="ocr-help">

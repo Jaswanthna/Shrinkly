@@ -8,7 +8,6 @@ import os
 import shutil
 import time
 import zipfile
-from pathlib import Path
 
 from app.models import ProcessingOptions
 from app.registry import get_handler
@@ -68,63 +67,72 @@ def _process_job_sync(
         _update_job(runtime, job_id, progress=10, analysis=analysis)
         _check_cancelled(runtime, job_id)
 
-        markdown_path = output_directory / "full.md"
-
-        def report_page_progress(completed: int, total: int) -> None:
-            _check_cancelled(runtime, job_id)
-            progress = 10 + round(65 * completed / max(total, 1))
-            _update_job(runtime, job_id, progress=progress)
-
-        markdown = handler.to_markdown(
-            source_path,
-            ProcessingOptions(
-                output_path=markdown_path,
-                ocr_language=ocr_language,
-                progress_callback=report_page_progress,
-            ),
-        )
-        _check_cancelled(runtime, job_id)
-        _update_job(
-            runtime,
-            job_id,
-            progress=78,
-            warnings=analysis.warnings + markdown.warnings,
-        )
-
-        parts = split_markdown(
-            markdown.markdown_path,
-            output_directory / "parts",
-            token_limit,
-        )
-        _check_cancelled(runtime, job_id)
-        compressed_path: Path | None = None
         if mode == "compressed_original":
-            compressed_path = handler.compress(
+            _update_job(runtime, job_id, progress=25)
+            output_path = handler.compress(
                 source_path, output_directory / "compressed.pdf"
             )
+            if output_path is None:
+                raise ShrinklyError("Compressed PDF output is not available.")
+            download_filename = "compressed.pdf"
+            download_media_type = "application/pdf"
+            warnings: list[str] = []
+        else:
+            markdown_path = output_directory / "full.md"
 
-        package_path = output_directory / "shrinkly-output.zip"
-        build_package(
-            output_path=package_path,
-            markdown_path=markdown.markdown_path,
-            parts=parts,
-            analysis=analysis,
-            source_filename=upload.filename,
-            mode=mode,
-            token_limit=token_limit,
-            warnings=analysis.warnings + markdown.warnings,
-            compressed_path=compressed_path,
-        )
-        with zipfile.ZipFile(package_path) as archive:
-            if archive.testzip() is not None:
-                raise ShrinklyError("The generated download archive is invalid.")
+            def report_page_progress(completed: int, total: int) -> None:
+                _check_cancelled(runtime, job_id)
+                progress = 10 + round(65 * completed / max(total, 1))
+                _update_job(runtime, job_id, progress=progress)
+
+            markdown = handler.to_markdown(
+                source_path,
+                ProcessingOptions(
+                    output_path=markdown_path,
+                    ocr_language=ocr_language,
+                    progress_callback=report_page_progress,
+                ),
+            )
+            _check_cancelled(runtime, job_id)
+            warnings = analysis.warnings + markdown.warnings
+            _update_job(runtime, job_id, progress=78, warnings=warnings)
+
+            if mode == "text_only":
+                output_path = markdown.markdown_path
+                download_filename = "ai-ready.md"
+                download_media_type = "text/markdown"
+            else:
+                parts = split_markdown(
+                    markdown.markdown_path,
+                    output_directory / "parts",
+                    token_limit,
+                )
+                _check_cancelled(runtime, job_id)
+                output_path = output_directory / "shrinkly-parts.zip"
+                build_package(
+                    output_path=output_path,
+                    parts=parts,
+                    analysis=analysis,
+                    source_filename=upload.filename,
+                    mode=mode,
+                    token_limit=token_limit,
+                    warnings=warnings,
+                )
+                with zipfile.ZipFile(output_path) as archive:
+                    if archive.testzip() is not None:
+                        raise ShrinklyError("The generated download archive is invalid.")
+                download_filename = "ai-ready-parts.zip"
+                download_media_type = "application/zip"
 
         updated = _update_job(
             runtime,
             job_id,
             status="completed",
             progress=100,
-            download_path=package_path,
+            warnings=warnings,
+            download_path=output_path,
+            download_filename=download_filename,
+            download_media_type=download_media_type,
             completed_at=time.time(),
         )
         if not updated:

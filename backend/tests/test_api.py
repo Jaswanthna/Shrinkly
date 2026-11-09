@@ -68,12 +68,12 @@ def test_upload_job_status_and_download(tmp_path: Path) -> None:
 
         download = client.get(f"/api/jobs/{job_id}/download")
         assert download.status_code == 200
+        assert download.headers["content-type"] == "application/zip"
+        assert "ai-ready-parts.zip" in download.headers["content-disposition"]
         archive_path = tmp_path / "download.zip"
         archive_path.write_bytes(download.content)
         with zipfile.ZipFile(archive_path) as archive:
-            assert {"full.md", "manifest.json", "parts/part-01.md"} <= set(
-                archive.namelist()
-            )
+            assert {"manifest.json", "parts/part-01.md"} == set(archive.namelist())
             manifest = json.loads(archive.read("manifest.json"))
             assert manifest["format"] == "pdf"
 
@@ -132,12 +132,40 @@ def test_compressed_mode_and_invalid_options_keep_upload_retryable(
         assert status.json()["status"] == "completed"
 
         download = client.get(f"/api/jobs/{job_id}/download")
-        archive_path = tmp_path / "compressed-result.zip"
-        archive_path.write_bytes(download.content)
-        with zipfile.ZipFile(archive_path) as archive:
-            assert "compressed.pdf" in archive.namelist()
-            with fitz.open(stream=archive.read("compressed.pdf"), filetype="pdf") as pdf:
-                assert pdf.page_count == 1
+        assert download.headers["content-type"] == "application/pdf"
+        assert "compressed.pdf" in download.headers["content-disposition"]
+        with fitz.open(stream=download.content, filetype="pdf") as pdf:
+            assert pdf.page_count == 1
+
+
+def test_text_only_mode_downloads_one_markdown_file(tmp_path: Path) -> None:
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        max_upload_bytes=1024 * 1024,
+        chunk_bytes=1024 * 1024,
+    )
+    with TestClient(create_app(settings)) as client:
+        upload_id = _upload(client, _make_pdf())
+        created = client.post(
+            "/api/jobs",
+            json={
+                "upload_id": upload_id,
+                "mode": "text_only",
+                "target_ai": "custom",
+            },
+        )
+        assert created.status_code == 202
+        job_id = created.json()["job_id"]
+
+        status = client.get(f"/api/jobs/{job_id}")
+        assert status.json()["status"] == "completed"
+        download = client.get(f"/api/jobs/{job_id}/download")
+
+    assert download.status_code == 200
+    assert download.headers["content-type"].startswith("text/markdown")
+    assert "ai-ready.md" in download.headers["content-disposition"]
+    assert b"#" in download.content
+    assert b"parts/" not in download.content
 
 
 def test_upload_size_limit(tmp_path: Path) -> None:

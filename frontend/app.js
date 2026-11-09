@@ -3,10 +3,13 @@ const dropzone = document.querySelector("#dropzone");
 const fileSummary = document.querySelector("#file-summary");
 const startButton = document.querySelector("#start-button");
 const modeInput = document.querySelector("#mode");
+const outputPreview = document.querySelector("#output-preview");
 const targetInput = document.querySelector("#target-ai");
+const targetAiField = document.querySelector("#target-ai-field");
 const customLimitField = document.querySelector("#custom-limit-field");
 const customLimitInput = document.querySelector("#custom-limit");
 const languageInput = document.querySelector("#ocr-language");
+const ocrLanguageField = document.querySelector("#ocr-language-field");
 const progressArea = document.querySelector("#progress-area");
 const progressBar = document.querySelector("#progress");
 const progressPercent = document.querySelector("#progress-percent");
@@ -72,6 +75,27 @@ dropzone.addEventListener("drop", (event) => {
 targetInput.addEventListener("change", () => {
   customLimitField.hidden = targetInput.value !== "custom";
 });
+
+function updateModeOptions() {
+  const mode = modeInput.value;
+  targetAiField.hidden = mode !== "split";
+  customLimitField.hidden = mode !== "split" || targetInput.value !== "custom";
+  ocrLanguageField.hidden = mode === "compressed_original";
+
+  if (mode === "text_only") {
+    outputPreview.innerHTML =
+      "Download: <b>ai-ready.md</b> — one complete Markdown document.";
+  } else if (mode === "compressed_original") {
+    outputPreview.innerHTML =
+      "Download: <b>compressed.pdf</b> — one compressed PDF, no extra files.";
+  } else {
+    outputPreview.innerHTML =
+      "Download: <b>ai-ready-parts.zip</b> with parts and a manifest — no duplicate full document.";
+  }
+}
+
+modeInput.addEventListener("change", updateModeOptions);
+updateModeOptions();
 
 async function apiRequest(url, options = {}) {
   const response = await fetch(url, options);
@@ -152,10 +176,10 @@ startButton.addEventListener("click", async () => {
     const jobPayload = {
       upload_id: uploadId,
       mode: modeInput.value,
-      target_ai: targetInput.value,
+      target_ai: modeInput.value === "split" ? targetInput.value : "chatgpt",
       ocr_language: languageInput.value.trim(),
     };
-    if (targetInput.value === "custom") {
+    if (modeInput.value === "split" && targetInput.value === "custom") {
       jobPayload.custom_token_limit = Number(customLimitInput.value);
     }
     const createResponse = await apiRequest("/api/jobs", {
@@ -166,6 +190,7 @@ startButton.addEventListener("click", async () => {
     const { job_id: jobId } = await createResponse.json();
     await waitForJob(jobId);
     downloadLink.href = `/api/jobs/${encodeURIComponent(jobId)}/download`;
+    downloadLink.textContent = `Download ${modeInput.value === "text_only" ? "Markdown file" : modeInput.value === "compressed_original" ? "compressed PDF" : "parts ZIP"}`;
     downloadLink.hidden = false;
     setProgress(100, "Your AI-ready file is ready.");
   } catch (error) {

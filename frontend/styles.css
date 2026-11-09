@@ -357,6 +357,21 @@ h1 strong {
   font-size: 10px;
 }
 
+.output-preview {
+  padding: 9px;
+  color: #657166;
+  background: #f0f3e8;
+  border-left: 2px solid #8eaa5b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.output-preview b {
+  color: #315a3f;
+  font-family: Consolas, monospace;
+  font-weight: 700;
+}
+
 .primary-button,
 .download-button {
   width: 100%;

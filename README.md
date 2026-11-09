@@ -12,17 +12,20 @@ to an AI provider.
   OCRed individually; pages with selectable text are not OCRed.
 - Token estimates based on characters divided by four and configurable
   ChatGPT, Claude, Gemini, and custom part-size choices.
-- ZIP output with `full.md`, `parts/`, and `manifest.json`; compressed-original
-  mode also adds a metadata-stripped, stream-compressed `compressed.pdf`.
+- Three explicit output modes: one `.md` download, a parts-only ZIP with a
+  manifest, or one metadata-stripped, stream-compressed `.pdf` download.
 - A responsive browser UI served by the FastAPI app.
 - Per-IP upload-init rate limiting and hourly cleanup of local temporary files.
 
 Provider token limits in `backend/app/config/ai_limits.json` are conservative
 defaults, not current provider guarantees. Verify the limits and the selected
-provider's file-upload rules before deployment. The MVP's compressed PDF mode
-compresses PDF streams but does not downsample embedded images. Markdown
-extraction preserves text blocks, headings inferred from font sizes, and basic
-list markers; complex tables, charts, and formulas may lose layout.
+provider's file-upload rules before deployment. Split mode packages only
+`parts/part-*.md` and `manifest.json`; it intentionally omits the duplicate
+full Markdown document. The compressed PDF mode returns only the PDF, compresses
+PDF streams, and does not downsample embedded images. Markdown extraction
+preserves text blocks, headings inferred from font sizes, basic list markers,
+and tables that PyMuPDF detects; complex layouts, charts, and formulas may lose
+structure.
 
 ## Requirements
 

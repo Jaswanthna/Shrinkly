@@ -41,6 +41,8 @@ class Job:
     warnings: list[str] = field(default_factory=list)
     analysis: AnalysisResult | None = None
     download_path: Path | None = None
+    download_filename: str | None = None
+    download_media_type: str | None = None
     error: str | None = None
     created_at: float = field(default_factory=time.time)
     completed_at: float | None = None

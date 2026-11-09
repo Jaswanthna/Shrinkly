@@ -12,16 +12,14 @@ from app.services.tokens import estimate_tokens_from_characters
 
 def build_package(
     output_path: Path,
-    markdown_path: Path,
     parts: list[PartFile],
     analysis: AnalysisResult,
     source_filename: str,
     mode: str,
     token_limit: int,
     warnings: list[str],
-    compressed_path: Path | None = None,
 ) -> None:
-    """Write the full Markdown, parts, optional compressed PDF, and manifest."""
+    """Write only split Markdown parts and their manifest to a ZIP."""
     manifest = {
         "source_file": Path(source_filename).name,
         "format": analysis.format,
@@ -45,11 +43,8 @@ def build_package(
     with zipfile.ZipFile(
         output_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
     ) as archive:
-        archive.write(markdown_path, "full.md")
         for part in parts:
             archive.write(part.path, f"parts/{part.path.name}")
-        if compressed_path is not None:
-            archive.write(compressed_path, "compressed.pdf")
         archive.writestr(
             "manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2),

@@ -140,7 +140,7 @@ async def create_job(
         if session.received_bytes != session.expected_size:
             raise HTTPException(status_code=409, detail="The upload is not complete.")
 
-        token_limit = _resolve_token_limit(payload)
+        token_limit = _resolve_token_limit(payload) if payload.mode == "split" else 0
         try:
             await asyncio.to_thread(_assemble_upload, runtime, session)
             handler = get_handler(session.source_path)
@@ -184,21 +184,28 @@ async def get_job_status(job_id: str, request: Request) -> JobStatusResponse:
 
 @router.get("/jobs/{job_id}/download")
 async def download_job(job_id: str, request: Request) -> FileResponse:
-    """Stream the completed result archive to the client."""
+    """Stream the completed mode-specific result to the client."""
     runtime = _runtime(request)
     with runtime.lock:
         job = runtime.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found or expired.")
-        if job.status != "completed" or job.download_path is None:
+        if (
+            job.status != "completed"
+            or job.download_path is None
+            or job.download_filename is None
+            or job.download_media_type is None
+        ):
             raise HTTPException(status_code=409, detail="The result is not ready yet.")
         download_path = job.download_path
+        download_filename = job.download_filename
+        download_media_type = job.download_media_type
     if not download_path.is_file():
         raise HTTPException(status_code=404, detail="The result file is no longer available.")
     return FileResponse(
         download_path,
-        media_type="application/zip",
-        filename="shrinkly-ai-ready.zip",
+        media_type=download_media_type,
+        filename=download_filename,
     )
 
 
