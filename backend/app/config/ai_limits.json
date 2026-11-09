@@ -1,0 +1,12 @@
+{
+  "_note": "Conservative configurable defaults, not a guarantee of current provider upload limits. Verify provider limits before deployment.",
+  "chatgpt": {
+    "token_limit": 32000
+  },
+  "claude": {
+    "token_limit": 50000
+  },
+  "gemini": {
+    "token_limit": 50000
+  }
+}

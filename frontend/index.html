@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#eeefe7">
+    <title>Shrinkly — Make any PDF AI-ready</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Shrinkly home">
+          <span class="brand-mark" aria-hidden="true">S/</span>
+          <span class="brand-name">SHRINKLY<small>DOCUMENT UTILITY / 01</small></span>
+        </a>
+        <div class="top-meta">
+          <span class="status-dot">LOCAL PROCESSING</span>
+          <span class="top-note">PHASE 01 <b>PDF</b></span>
+        </div>
+      </header>
+
+      <div class="workspace-layout">
+        <section class="intro" aria-labelledby="page-title">
+          <p class="eyebrow"><span>01</span> DOCUMENT PREPARATION / PHASE ONE</p>
+          <h1 id="page-title">Take a PDF<br>from <em>heavy</em> to<br><strong>AI-ready.</strong></h1>
+          <p class="intro-copy">
+            Make long documents lighter, searchable, and easier to work with.
+            No AI hand-off. Just a cleaner file, ready when you are.
+          </p>
+          <div class="spec-list" aria-label="Service details">
+            <div><span>INPUT</span><b>PDF / UP TO 1 GB</b></div>
+            <div><span>OUTPUT</span><b>MARKDOWN + PARTS</b></div>
+            <div><span>RETENTION</span><b>AUTO-DELETE / 1 HOUR</b></div>
+          </div>
+        </section>
+
+        <section class="card" aria-label="Prepare a PDF">
+          <div class="card-heading">
+            <span><b>01</b> / INGEST</span>
+            <span>SECURE LOCAL QUEUE</span>
+          </div>
+          <label class="dropzone" id="dropzone" for="file-input">
+            <span class="upload-icon" aria-hidden="true">PDF</span>
+            <span class="drop-title">Place document to begin</span>
+            <span class="drop-help">Drop a file or <span class="browse">choose from device</span></span>
+            <span class="file-note">PDF FORMAT ONLY <i>·</i> MAX 1 GB</span>
+            <input id="file-input" type="file" accept="application/pdf,.pdf">
+          </label>
+
+          <p id="file-summary" class="file-summary" hidden></p>
+
+          <div class="options">
+            <label>
+              <span class="field-label"><i>02</i> OUTPUT MODE</span>
+              <select id="mode">
+                <option value="split">Split into AI-sized parts</option>
+                <option value="text_only">Text only (Markdown)</option>
+                <option value="compressed_original">Markdown + compressed PDF</option>
+              </select>
+            </label>
+            <label>
+              <span class="field-label"><i>03</i> TARGET / PART SIZE</span>
+              <select id="target-ai">
+                <option value="chatgpt">ChatGPT · 32K token parts</option>
+                <option value="claude">Claude · 50K token parts</option>
+                <option value="gemini">Gemini · 50K token parts</option>
+                <option value="custom">Custom token limit</option>
+              </select>
+            </label>
+            <label id="custom-limit-field" class="custom-field" hidden>
+              <span class="field-label"><i>04</i> CUSTOM TOKEN LIMIT</span>
+              <input id="custom-limit" type="number" min="64" max="1000000" value="8000">
+            </label>
+            <label>
+              <span class="field-label"><i>04</i> OCR LANGUAGE</span>
+              <input id="ocr-language" type="text" value="eng" maxlength="32"
+                autocomplete="off" aria-describedby="ocr-help">
+              <span class="input-help" id="ocr-help">Tesseract language, e.g. eng or deu</span>
+            </label>
+          </div>
+
+          <button id="start-button" class="primary-button" type="button" disabled>
+            <span>START PREPARATION</span><b aria-hidden="true">↗</b>
+          </button>
+
+          <div id="progress-area" class="progress-area" hidden aria-live="polite">
+            <div class="progress-heading">
+              <span id="progress-label">Preparing your file…</span>
+              <span id="progress-percent">0%</span>
+            </div>
+            <progress id="progress" max="100" value="0">0%</progress>
+            <div id="analysis" class="analysis" hidden></div>
+            <ul id="warnings" class="warnings"></ul>
+            <a id="download-link" class="download-button" hidden download>
+              Download your AI-ready ZIP <span aria-hidden="true">↓</span>
+            </a>
+            <p id="error-message" class="error-message" role="alert"></p>
+          </div>
+
+          <p class="privacy-note">
+            <span aria-hidden="true">●</span>
+            Files stay on this server and are removed after one hour.
+          </p>
+        </section>
+      </div>
+
+      <footer>
+        <span>SHRINKLY <i>—</i> DOCUMENT UTILITY / 01</span>
+        <span>PROCESSING STAYS HERE. NO AI PROVIDER CONNECTION.</span>
+      </footer>
+    </main>
+  </body>
+</html>
