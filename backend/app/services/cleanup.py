@@ -19,32 +19,42 @@ def cleanup_expired(runtime: RuntimeState, now: float | None = None) -> None:
     current_time = time.time() if now is None else now
     with runtime.lock:
         expired_ids: list[str] = []
-        for upload_id, session in runtime.uploads.items():
-            job = runtime.jobs.get(session.job_id) if session.job_id else None
+        sessions = runtime.all_uploads()
+        for session in sessions:
+            upload_id = session.upload_id
+            job = runtime.get_job(session.job_id) if session.job_id else None
             if job is not None and job.status in {"queued", "processing", "deleting"}:
+                continue
+            if session.lock.locked():
+                continue
+            if runtime.redis is not None and runtime.redis.exists(
+                f"shrinkly:upload-lock:{upload_id}"
+            ):
                 continue
             expiry_time = (
                 job.completed_at + runtime.settings.expiry_seconds
                 if job is not None and job.completed_at is not None
-                else session.created_at + runtime.settings.expiry_seconds
+                else session.last_activity_at + runtime.settings.expiry_seconds
             )
             if current_time >= expiry_time:
                 expired_ids.append(upload_id)
 
         for upload_id in expired_ids:
-            session = runtime.uploads[upload_id]
+            session = runtime.get_upload(upload_id)
+            if session is None:
+                continue
             if session.directory.parent == runtime.settings.data_dir:
                 try:
                     shutil.rmtree(session.directory, ignore_errors=False)
                 except OSError as exc:
                     logger.error("Expired-file cleanup failed (%s).", type(exc).__name__)
                     continue
-            runtime.uploads.pop(upload_id, None)
+            runtime.remove_upload(upload_id)
             if session.job_id:
-                runtime.jobs.pop(session.job_id, None)
+                runtime.remove_job(session.job_id)
 
         known_directories = {
-            session.directory.resolve() for session in runtime.uploads.values()
+            session.directory.resolve() for session in runtime.all_uploads()
         }
         try:
             entries = tuple(runtime.settings.data_dir.iterdir())

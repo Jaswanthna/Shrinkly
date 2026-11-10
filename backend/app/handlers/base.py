@@ -13,6 +13,7 @@ class FormatHandler(ABC):
 
     extensions: list[str] = []
     mime_types: list[str] = []
+    magic_signatures: tuple[bytes, ...] = ()
     format_name: str
 
     @abstractmethod

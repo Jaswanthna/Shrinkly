@@ -8,6 +8,8 @@ import os
 import shutil
 import time
 import zipfile
+from types import TracebackType
+from typing import TYPE_CHECKING, Type
 
 from app.models import ProcessingOptions
 from app.registry import get_handler
@@ -18,6 +20,10 @@ from app.state import Job, RuntimeState
 
 
 logger = logging.getLogger("shrinkly.jobs")
+
+if TYPE_CHECKING:
+    from redis import Redis
+    from rq.job import Job as RQJob
 
 
 async def process_job(
@@ -38,6 +44,54 @@ async def process_job(
     )
 
 
+def process_queued_job(
+    job_id: str,
+    mode: str,
+    token_limit: int,
+    ocr_language: str,
+) -> None:
+    """Run an RQ job using Redis-backed state and shared local storage."""
+    from app.settings import Settings
+
+    runtime = RuntimeState(Settings.from_environment())
+    _process_job_sync(runtime, job_id, mode, token_limit, ocr_language)
+
+
+def mark_queued_job_failed(
+    rq_job: RQJob,
+    connection: Redis,
+    exception_type: Type[BaseException],
+    _exception_value: BaseException,
+    _traceback: TracebackType | None,
+) -> None:
+    """Persist failure when RQ stops a worker job, including timeout kills."""
+    from app.settings import Settings
+
+    runtime = RuntimeState(
+        Settings.from_environment(),
+        redis_client=connection,
+    )
+    job = runtime.get_job(rq_job.id)
+    if job is None:
+        return
+    if job.cancel_requested:
+        _finalize_deletion(runtime, job.job_id)
+        return
+    timeout = exception_type.__name__ == "JobTimeoutException"
+    job.status = "failed"
+    job.progress = min(job.progress, 99)
+    job.error = (
+        "Processing exceeded the configured time limit. Try a smaller PDF."
+        if timeout
+        else "Processing failed. Check that the PDF is valid and required OCR tools are installed."
+    )
+    job.completed_at = time.time()
+    runtime.save_job(job)
+    session = runtime.get_upload(job.upload_id)
+    if session is not None and session.directory.is_dir():
+        os.utime(session.directory, None)
+
+
 def _process_job_sync(
     runtime: RuntimeState,
     job_id: str,
@@ -47,21 +101,23 @@ def _process_job_sync(
 ) -> None:
     """Execute the CPU- and disk-intensive work for one job."""
     with runtime.lock:
-        job = runtime.jobs.get(job_id)
+        job = runtime.get_job(job_id)
         if job is None:
             return
         job.status = "processing"
-        upload = runtime.uploads.get(job.upload_id)
+        runtime.save_job(job)
+        upload = runtime.get_upload(job.upload_id)
         if upload is None:
             job.status = "failed"
             job.error = "The uploaded file is no longer available."
             job.completed_at = time.time()
+            runtime.save_job(job)
             return
         source_path = upload.source_path
         output_directory = upload.directory / "job-output"
-        output_directory.mkdir(parents=True, exist_ok=True)
 
     try:
+        output_directory.mkdir(parents=True, exist_ok=True)
         handler = get_handler(source_path)
         analysis = handler.analyze(source_path)
         _update_job(runtime, job_id, progress=10, analysis=analysis)
@@ -76,7 +132,10 @@ def _process_job_sync(
                 raise ShrinklyError("Compressed PDF output is not available.")
             download_filename = "compressed.pdf"
             download_media_type = "application/pdf"
-            warnings: list[str] = []
+            warnings = [
+                "Images above 300 DPI are downsampled toward 150 DPI; "
+                "image quality may be reduced."
+            ]
         else:
             markdown_path = output_directory / "full.md"
 
@@ -166,18 +225,21 @@ def _process_job_sync(
             _finalize_deletion(runtime, job_id)
 
 
-def _update_job(runtime: RuntimeState, job_id: str, **changes: object) -> bool:
+def _update_job(
+    runtime: RuntimeState, job_id: str, **changes: object
+) -> bool:
     """Apply job state changes safely from worker threads."""
     with runtime.lock:
-        job = runtime.jobs.get(job_id)
+        job = runtime.get_job(job_id)
         if job is None:
             return False
         if job.cancel_requested and changes.get("status") in {"completed", "failed"}:
             return False
         for key, value in changes.items():
             setattr(job, key, value)
+        runtime.save_job(job)
+        session = runtime.get_upload(job.upload_id)
         if "completed_at" in changes:
-            session = runtime.uploads.get(job.upload_id)
             if session is not None and session.directory.is_dir():
                 os.utime(session.directory, None)
         return True
@@ -186,7 +248,7 @@ def _update_job(runtime: RuntimeState, job_id: str, **changes: object) -> bool:
 def _check_cancelled(runtime: RuntimeState, job_id: str) -> None:
     """Stop processing when a user has requested job deletion."""
     with runtime.lock:
-        job = runtime.jobs.get(job_id)
+        job = runtime.get_job(job_id)
         if job is None or job.cancel_requested:
             raise ShrinklyError("This job was deleted.")
 
@@ -194,19 +256,19 @@ def _check_cancelled(runtime: RuntimeState, job_id: str) -> None:
 def _is_cancelled(runtime: RuntimeState, job_id: str) -> bool:
     """Check whether deletion was requested while processing."""
     with runtime.lock:
-        job = runtime.jobs.get(job_id)
+        job = runtime.get_job(job_id)
         return job is None or job.cancel_requested
 
 
 def _finalize_deletion(runtime: RuntimeState, job_id: str) -> None:
     """Remove a cancelled job's files after open documents have been closed."""
     with runtime.lock:
-        job = runtime.jobs.get(job_id)
+        job = runtime.get_job(job_id)
         if job is None:
             return
-        session = runtime.uploads.get(job.upload_id)
+        session = runtime.get_upload(job.upload_id)
         if session is None:
-            runtime.jobs.pop(job_id, None)
+            runtime.remove_job(job_id)
             return
         try:
             if session.directory.parent == runtime.settings.data_dir:
@@ -216,6 +278,7 @@ def _finalize_deletion(runtime: RuntimeState, job_id: str) -> None:
             job.status = "failed"
             job.error = "The job stopped, but its files could not be deleted immediately."
             job.completed_at = time.time()
+            runtime.save_job(job)
             return
-        runtime.uploads.pop(session.upload_id, None)
-        runtime.jobs.pop(job_id, None)
+        runtime.remove_upload(session.upload_id)
+        runtime.remove_job(job_id)

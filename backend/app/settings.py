@@ -17,6 +17,9 @@ class Settings:
     chunk_bytes: int = 8 * 1024 * 1024
     expiry_seconds: int = 60 * 60
     uploads_per_ip_per_hour: int = 20
+    redis_url: str | None = None
+    job_timeout_seconds: int = 15 * 60
+    trust_proxy_headers: bool = False
 
     def __post_init__(self) -> None:
         """Reject invalid limits before creating storage or accepting requests."""
@@ -25,6 +28,7 @@ class Settings:
             or self.chunk_bytes <= 0
             or self.expiry_seconds <= 0
             or self.uploads_per_ip_per_hour <= 0
+            or self.job_timeout_seconds <= 0
         ):
             raise ValueError("Upload limits, expiry, and rate limits must be positive.")
 
@@ -50,4 +54,12 @@ class Settings:
             uploads_per_ip_per_hour=int(
                 os.environ.get("SHRINKLY_UPLOADS_PER_IP_PER_HOUR", 20)
             ),
+            redis_url=os.environ.get("SHRINKLY_REDIS_URL") or None,
+            job_timeout_seconds=int(
+                os.environ.get("SHRINKLY_JOB_TIMEOUT_SECONDS", 15 * 60)
+            ),
+            trust_proxy_headers=os.environ.get(
+                "SHRINKLY_TRUST_PROXY_HEADERS", "false"
+            ).lower()
+            in {"1", "true", "yes"},
         )

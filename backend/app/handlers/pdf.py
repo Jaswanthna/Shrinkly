@@ -20,6 +20,7 @@ from app.services.tokens import estimate_tokens_from_characters
 
 _MIN_TEXT_CHARACTERS = 20
 _LANGUAGE_PATTERN = re.compile(r"^[A-Za-z0-9_+-]{1,32}$")
+_MAX_PDF_PAGES = 5000
 
 
 class PDFHandler(FormatHandler):
@@ -27,6 +28,7 @@ class PDFHandler(FormatHandler):
 
     extensions = [".pdf"]
     mime_types = ["application/pdf"]
+    magic_signatures = (b"%PDF-",)
     format_name = "pdf"
 
     def analyze(self, path: Path) -> AnalysisResult:
@@ -34,6 +36,7 @@ class PDFHandler(FormatHandler):
         try:
             with fitz.open(path) as document:
                 self._require_unlocked(document)
+                self._require_page_limit(document)
                 pages: list[PageAnalysis] = []
                 total_characters = 0
                 for page_number, page in enumerate(document, start=1):
@@ -82,6 +85,7 @@ class PDFHandler(FormatHandler):
                 "w", encoding="utf-8", newline="\n"
             ) as output:
                 self._require_unlocked(document)
+                self._require_page_limit(document)
                 for page_index, page in enumerate(document):
                     page_number = page_index + 1
                     text = page.get_text("text", sort=True)
@@ -143,11 +147,20 @@ class PDFHandler(FormatHandler):
         return MarkdownResult(markdown_path=options.output_path, warnings=warnings)
 
     def compress(self, path: Path, options: Path) -> Path | None:
-        """Rewrite a PDF with compressed streams and remove document metadata."""
+        """Downsample large images and rewrite the PDF without document metadata."""
         try:
             with fitz.open(path) as document:
                 self._require_unlocked(document)
+                self._require_page_limit(document)
                 document.set_metadata({})
+                document.rewrite_images(
+                    dpi_threshold=300,
+                    dpi_target=150,
+                    quality=75,
+                    lossy=True,
+                    lossless=True,
+                    bitonal=True,
+                )
                 document.save(
                     options,
                     garbage=4,
@@ -168,6 +181,15 @@ class PDFHandler(FormatHandler):
         if document.needs_pass:
             raise ShrinklyError(
                 "This PDF is password-protected. Remove the password and upload it again."
+            )
+
+    @staticmethod
+    def _require_page_limit(document: fitz.Document) -> None:
+        """Bound document work while retaining support for large PDFs."""
+        if document.page_count > _MAX_PDF_PAGES:
+            raise ShrinklyError(
+                f"This PDF has more than {_MAX_PDF_PAGES} pages. "
+                "Split it into smaller files and try again."
             )
 
     @staticmethod

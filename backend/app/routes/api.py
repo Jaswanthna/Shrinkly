@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import shutil
 import uuid
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from fastapi.responses import FileResponse
+from redis.exceptions import RedisError
 
 from app.models import AnalysisResult
 from app.registry import get_handler
@@ -30,6 +32,7 @@ from app.state import Job, RuntimeState, UploadSession
 
 router = APIRouter(prefix="/api")
 _AI_LIMITS_PATH = Path(__file__).resolve().parents[1] / "config" / "ai_limits.json"
+logger = logging.getLogger("shrinkly.api")
 
 
 @router.post("/upload/init", response_model=UploadInitResponse)
@@ -38,7 +41,7 @@ async def initialize_upload(
 ) -> UploadInitResponse:
     """Reserve a bounded temporary directory for a chunked upload."""
     runtime = _runtime(request)
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_ip(request, runtime)
     if not runtime.allow_upload(client_ip):
         raise HTTPException(
             status_code=429,
@@ -60,8 +63,11 @@ async def initialize_upload(
         directory=directory,
         source_path=directory / "source.pdf",
     )
-    with runtime.lock:
-        runtime.uploads[upload_id] = session
+    try:
+        runtime.save_upload(session)
+    except RedisError:
+        shutil.rmtree(directory, ignore_errors=False)
+        raise
     chunk_size = runtime.settings.chunk_bytes
     return UploadInitResponse(
         upload_id=upload_id,
@@ -77,52 +83,68 @@ async def upload_chunk(
 ) -> dict[str, int | bool]:
     """Accept exactly one ordered, bounded binary upload chunk."""
     runtime = _runtime(request)
-    session = _get_upload(runtime, upload_id)
-    async with session.lock:
-        if session.job_id is not None:
-            raise HTTPException(status_code=409, detail="This upload was already submitted.")
-        expected_chunks = math.ceil(
-            session.expected_size / runtime.settings.chunk_bytes
-        )
-        if chunk_index != session.next_chunk or chunk_index >= expected_chunks:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Expected upload chunk {session.next_chunk}.",
-            )
-        expected_chunk_size = min(
-            runtime.settings.chunk_bytes,
-            session.expected_size - session.received_bytes,
-        )
-        temporary_path = session.directory / f".chunk-{chunk_index:08d}.tmp"
-        final_path = session.directory / f"chunk-{chunk_index:08d}.part"
-        received = 0
-        try:
-            with temporary_path.open("wb") as target:
-                async for body_chunk in request.stream():
-                    received += len(body_chunk)
-                    if received > expected_chunk_size:
-                        raise HTTPException(
-                            status_code=413,
-                            detail="Upload chunk exceeds its expected size.",
-                        )
-                    target.write(body_chunk)
-            if received != expected_chunk_size:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Upload chunk size does not match the expected size.",
-                )
-            temporary_path.replace(final_path)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
+    try:
+        upload_guard = runtime.upload_guard(upload_id)
+        async with upload_guard as session:
+            if session is None:
+                raise HTTPException(status_code=404, detail="Upload not found or expired.")
+            return await _write_chunk(session, request, runtime, chunk_index)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        session.received_bytes += received
-        session.next_chunk += 1
-        return {
-            "chunk_index": chunk_index,
-            "received_bytes": session.received_bytes,
-            "complete": session.received_bytes == session.expected_size,
-        }
+
+async def _write_chunk(
+    session: UploadSession,
+    request: Request,
+    runtime: RuntimeState,
+    chunk_index: int,
+) -> dict[str, int | bool]:
+    """Validate and persist one sequential chunk while its upload is locked."""
+    if session.job_id is not None:
+        raise HTTPException(status_code=409, detail="This upload was already submitted.")
+    expected_chunks = math.ceil(
+        session.expected_size / runtime.settings.chunk_bytes
+    )
+    if chunk_index != session.next_chunk or chunk_index >= expected_chunks:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Expected upload chunk {session.next_chunk}.",
+        )
+    expected_chunk_size = min(
+        runtime.settings.chunk_bytes,
+        session.expected_size - session.received_bytes,
+    )
+    temporary_path = session.directory / f".chunk-{chunk_index:08d}.tmp"
+    final_path = session.directory / f"chunk-{chunk_index:08d}.part"
+    received = 0
+    try:
+        with temporary_path.open("wb") as target:
+            async for body_chunk in request.stream():
+                received += len(body_chunk)
+                if received > expected_chunk_size:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Upload chunk exceeds its expected size.",
+                    )
+                target.write(body_chunk)
+        if received != expected_chunk_size:
+            raise HTTPException(
+                status_code=400,
+                detail="Upload chunk size does not match the expected size.",
+            )
+        temporary_path.replace(final_path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+    session.received_bytes += received
+    session.next_chunk += 1
+    runtime.save_upload(session)
+    return {
+        "chunk_index": chunk_index,
+        "received_bytes": session.received_bytes,
+        "complete": session.received_bytes == session.expected_size,
+    }
 
 
 @router.post("/jobs", response_model=JobCreateResponse, status_code=202)
@@ -133,41 +155,81 @@ async def create_job(
 ) -> JobCreateResponse:
     """Validate a completed upload and queue its conversion."""
     runtime = _runtime(request)
-    session = _get_upload(runtime, payload.upload_id)
-    async with session.lock:
-        if session.job_id is not None:
-            raise HTTPException(status_code=409, detail="This upload was already submitted.")
-        if session.received_bytes != session.expected_size:
-            raise HTTPException(status_code=409, detail="The upload is not complete.")
+    try:
+        upload_guard = runtime.upload_guard(payload.upload_id)
+        async with upload_guard as session:
+            if session is None:
+                raise HTTPException(status_code=404, detail="Upload not found or expired.")
+            return await _create_job_locked(
+                payload, runtime, background_tasks, session
+            )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        token_limit = _resolve_token_limit(payload) if payload.mode == "split" else 0
+
+async def _create_job_locked(
+    payload: JobCreateRequest,
+    runtime: RuntimeState,
+    background_tasks: BackgroundTasks,
+    session: UploadSession,
+) -> JobCreateResponse:
+    """Create and enqueue a job while holding its upload lock."""
+    if session.job_id is not None:
+        raise HTTPException(status_code=409, detail="This upload was already submitted.")
+    if session.received_bytes != session.expected_size:
+        raise HTTPException(status_code=409, detail="The upload is not complete.")
+
+    token_limit = _resolve_token_limit(payload) if payload.mode == "split" else 0
+    try:
+        await asyncio.to_thread(_assemble_upload, runtime, session)
+        handler = get_handler(session.source_path)
+    except ShrinklyError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400, detail="The uploaded file could not be assembled."
+        ) from exc
+
+    expected_chunks = math.ceil(
+        session.expected_size / runtime.settings.chunk_bytes
+    )
+    for index in range(expected_chunks):
+        (session.directory / f"chunk-{index:08d}.part").unlink(missing_ok=True)
+    job_id = str(uuid.uuid4())
+    job = Job(job_id=job_id, upload_id=session.upload_id, format=handler.format_name)
+    session.job_id = job_id
+    try:
+        runtime.save_upload(session)
+        runtime.save_job(job)
+        if runtime.queue is None:
+            background_tasks.add_task(
+                process_job,
+                runtime,
+                job_id,
+                payload.mode,
+                token_limit,
+                payload.ocr_language,
+            )
+        else:
+            runtime.enqueue_job(
+                job_id,
+                payload.mode,
+                token_limit,
+                payload.ocr_language,
+            )
+    except RedisError as exc:
+        session.job_id = None
         try:
-            await asyncio.to_thread(_assemble_upload, runtime, session)
-            handler = get_handler(session.source_path)
-        except ShrinklyError as exc:
-            raise HTTPException(status_code=415, detail=str(exc)) from exc
-        except OSError as exc:
-            raise HTTPException(
-                status_code=400, detail="The uploaded file could not be assembled."
-            ) from exc
-        expected_chunks = math.ceil(
-            session.expected_size / runtime.settings.chunk_bytes
-        )
-        for index in range(expected_chunks):
-            (session.directory / f"chunk-{index:08d}.part").unlink(missing_ok=True)
-        job_id = str(uuid.uuid4())
-        job = Job(job_id=job_id, upload_id=session.upload_id, format=handler.format_name)
-        with runtime.lock:
-            session.job_id = job_id
-            runtime.jobs[job_id] = job
-        background_tasks.add_task(
-            process_job,
-            runtime,
-            job_id,
-            payload.mode,
-            token_limit,
-            payload.ocr_language,
-        )
+            runtime.save_upload(session)
+            runtime.remove_job(job_id)
+        except RedisError as cleanup_error:
+            logger.error(
+                "Queue rollback failed (%s).", type(cleanup_error).__name__
+            )
+        raise HTTPException(
+            status_code=503,
+            detail="The processing queue is unavailable. Try again shortly.",
+        ) from exc
     return JobCreateResponse(job_id=job_id, status="queued")
 
 
@@ -176,7 +238,7 @@ async def get_job_status(job_id: str, request: Request) -> JobStatusResponse:
     """Return status, progress, analysis, and warnings for a job."""
     runtime = _runtime(request)
     with runtime.lock:
-        job = runtime.jobs.get(job_id)
+        job = runtime.get_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found or expired.")
         return _serialize_job(job)
@@ -187,7 +249,7 @@ async def download_job(job_id: str, request: Request) -> FileResponse:
     """Stream the completed mode-specific result to the client."""
     runtime = _runtime(request)
     with runtime.lock:
-        job = runtime.jobs.get(job_id)
+        job = runtime.get_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found or expired.")
         if (
@@ -214,19 +276,41 @@ async def delete_job(job_id: str, request: Request) -> Response:
     """Delete an upload and its result, cancelling active work if needed."""
     runtime = _runtime(request)
     with runtime.lock:
-        job = runtime.jobs.get(job_id)
+        job = runtime.get_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found or already deleted.")
-        session = runtime.uploads.get(job.upload_id)
-        if job.status == "processing":
-            job.cancel_requested = True
-            job.status = "deleting"
+        session = runtime.get_upload(job.upload_id)
+        if job.status in {"processing", "deleting"}:
+            runtime.request_job_cancellation(job)
             return Response(status_code=202)
+        if runtime.queue is not None:
+            try:
+                from rq.job import Job as RQJob
+                from rq.exceptions import NoSuchJobError
+
+                queued = RQJob.fetch(job_id, connection=runtime.redis)
+                queue_status = queued.get_status(refresh=True)
+                queue_status = getattr(queue_status, "value", queue_status)
+                if queue_status == "started":
+                    runtime.request_job_cancellation(job)
+                    return Response(status_code=202)
+                if queue_status == "queued":
+                    queued.cancel()
+            except NoSuchJobError:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The worker job is unavailable; retry deletion shortly.",
+                )
+            except RedisError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="The job store is unavailable. Try deletion again shortly.",
+                ) from exc
         if session is not None:
             if session.directory.parent == runtime.settings.data_dir:
                 shutil.rmtree(session.directory, ignore_errors=False)
-            runtime.uploads.pop(session.upload_id, None)
-        runtime.jobs.pop(job_id, None)
+            runtime.remove_upload(session.upload_id)
+        runtime.remove_job(job_id)
     return Response(status_code=204)
 
 
@@ -299,10 +383,18 @@ def _runtime(request: Request) -> RuntimeState:
     return request.app.state.runtime
 
 
+def _client_ip(request: Request, runtime: RuntimeState) -> str:
+    """Resolve the client address, trusting forwarded headers only behind a proxy."""
+    if runtime.settings.trust_proxy_headers:
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        if forwarded_for.strip():
+            return forwarded_for.split(",", maxsplit=1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 def _get_upload(runtime: RuntimeState, upload_id: str) -> UploadSession:
     """Return a known upload without exposing storage paths."""
-    with runtime.lock:
-        session = runtime.uploads.get(upload_id)
+    session = runtime.get_upload(upload_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Upload not found or expired.")
     return session
